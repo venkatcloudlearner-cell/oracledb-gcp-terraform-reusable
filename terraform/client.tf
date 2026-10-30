@@ -1,3 +1,22 @@
+moved {
+  from = google_compute_instance.sqlclient
+  to   = google_compute_instance.sqlclient[0]
+}
+moved {
+  from = google_compute_firewall.client_iap_ssh
+  to   = google_compute_firewall.client_iap_ssh[0]
+}
+
+moved {
+  from = google_compute_router_nat.client
+  to   = google_compute_router_nat.client[0]
+}
+
+moved {
+  from = google_compute_router.client
+  to   = google_compute_router.client[0]
+}
+
 # SQL client VM: uses the existing application subnet, not the ODB subnet.
 # CUSTOMIZE: this Compute Engine zone is distinct from gcp_oracle_zone.
 variable "client_vm_zone" {
@@ -25,9 +44,10 @@ resource "google_project_service" "iap" {
 
 # SSH is allowed only from Google's documented IAP TCP forwarding range.
 resource "google_compute_firewall" "client_iap_ssh" {
+  count         = var.retain_client ? 1 : 0
   project       = var.project_id
   name          = "${var.name_prefix}-iap-ssh"
-  network       = google_compute_network.demo.id
+  network       = local.vpc_id
   direction     = "INGRESS"
   source_ranges = ["35.235.240.0/20"]
   target_tags   = ["adbs-sqlclient"]
@@ -40,25 +60,28 @@ resource "google_compute_firewall" "client_iap_ssh" {
 # Outbound internet access for packages; the VM has no external IP.
 # Cloud NAT and the VM incur usage charges. NAT applies only to this subnet.
 resource "google_compute_router" "client" {
+  count   = var.network_mode == "create" && var.retain_client ? 1 : 0
   project = var.project_id
   name    = "${var.name_prefix}-client-router"
   region  = var.region
-  network = google_compute_network.demo.id
+  network = local.vpc_id
 }
 resource "google_compute_router_nat" "client" {
+  count                              = var.network_mode == "create" && var.retain_client ? 1 : 0
   project                            = var.project_id
   name                               = "${var.name_prefix}-client-nat"
   region                             = var.region
-  router                             = google_compute_router.client.name
+  router                             = google_compute_router.client[0].name
   nat_ip_allocate_option             = "AUTO_ONLY"
   source_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"
   subnetwork {
-    name                    = google_compute_subnetwork.client.id
+    name                    = local.application_subnet_id
     source_ip_ranges_to_nat = ["PRIMARY_IP_RANGE"]
   }
 }
 
 resource "google_compute_instance" "sqlclient" {
+  count               = var.retain_client ? 1 : 0
   project             = var.project_id
   name                = "${var.name_prefix}-sqlclient"
   zone                = var.client_vm_zone
@@ -74,7 +97,7 @@ resource "google_compute_instance" "sqlclient" {
     }
   }
   network_interface {
-    subnetwork = google_compute_subnetwork.client.id
+    subnetwork = local.application_subnet_id
     # No access_config: no public IP address.
   }
   # No service account attached: the SQL client needs no Google API privileges.
@@ -90,11 +113,11 @@ resource "google_compute_instance" "sqlclient" {
 }
 
 output "client_vm_name" {
-  value = google_compute_instance.sqlclient.name
+  value = try(google_compute_instance.sqlclient[0].name, null)
 }
 output "client_vm_zone" {
-  value = google_compute_instance.sqlclient.zone
+  value = try(google_compute_instance.sqlclient[0].zone, null)
 }
 output "client_vm_private_ip" {
-  value = google_compute_instance.sqlclient.network_interface[0].network_ip
+  value = try(google_compute_instance.sqlclient[0].network_interface[0].network_ip, null)
 }

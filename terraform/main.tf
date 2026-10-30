@@ -1,3 +1,23 @@
+moved {
+  from = google_oracle_database_odb_subnet.database
+  to   = google_oracle_database_odb_subnet.database[0]
+}
+
+moved {
+  from = google_oracle_database_odb_network.demo
+  to   = google_oracle_database_odb_network.demo[0]
+}
+
+moved {
+  from = google_compute_subnetwork.client
+  to   = google_compute_subnetwork.client[0]
+}
+
+moved {
+  from = google_compute_network.demo
+  to   = google_compute_network.demo[0]
+}
+
 # CUSTOMER GUIDE: customize input values in terraform.tfvars first.
 # Resource labels (demo/client/database) are Terraform addresses, not cloud names.
 # Keep ID references consistent; renaming addresses after deployment needs a state migration.
@@ -12,6 +32,7 @@ resource "google_project_service" "apis" {
 
 # A VPC is the Google Cloud network. An ODB network connects Oracle resources to it.
 resource "google_compute_network" "demo" {
+  count                   = var.network_mode == "create" ? 1 : 0
   project                 = var.project_id
   name                    = "${var.name_prefix}-vpc"
   auto_create_subnetworks = false
@@ -19,30 +40,33 @@ resource "google_compute_network" "demo" {
 }
 
 resource "google_compute_subnetwork" "client" {
+  count                    = var.network_mode == "create" ? 1 : 0
   project                  = var.project_id
   name                     = "${var.name_prefix}-client"
   region                   = var.region
-  network                  = google_compute_network.demo.id
+  network                  = local.vpc_id
   ip_cidr_range            = var.client_cidr
   private_ip_google_access = true
 }
 
 resource "google_oracle_database_odb_network" "demo" {
+  count          = var.network_mode == "create" && var.retain_odb_network ? 1 : 0
   project        = var.project_id
   location       = var.region
   odb_network_id = "${var.name_prefix}-odb"
   # CUSTOMIZE through terraform.tfvars: match the GCP Oracle Zone selected in the console.
   gcp_oracle_zone     = var.gcp_oracle_zone
-  network             = google_compute_network.demo.id
+  network             = local.vpc_id
   deletion_protection = var.deletion_protection
   # CUSTOMIZE: resource metadata for your environment.
   labels = { environment = "demo", managed_by = "terraform" }
 }
 
 resource "google_oracle_database_odb_subnet" "database" {
+  count               = var.network_mode == "create" && var.retain_odb_network ? 1 : 0
   project             = var.project_id
   location            = var.region
-  odbnetwork          = google_oracle_database_odb_network.demo.odb_network_id
+  odbnetwork          = google_oracle_database_odb_network.demo[0].odb_network_id
   odb_subnet_id       = "${var.name_prefix}-db-subnet"
   cidr_range          = var.database_cidr
   purpose             = "CLIENT_SUBNET"
@@ -51,7 +75,7 @@ resource "google_oracle_database_odb_subnet" "database" {
 
 # Kept off until onboarding, networking, supported version and costs are reviewed.
 resource "google_oracle_database_autonomous_database" "demo" {
-  count                  = var.create_database ? 1 : 0
+  count                  = var.create_database && var.retain_database ? 1 : 0
   project                = var.project_id
   location               = var.region
   autonomous_database_id = coalesce(var.database_resource_id, "${var.name_prefix}-26ai")
@@ -60,8 +84,8 @@ resource "google_oracle_database_autonomous_database" "demo" {
   # CUSTOMIZE: human-readable database display name.
   display_name        = var.database_display_name
   admin_password      = var.admin_password
-  odb_network         = google_oracle_database_odb_network.demo.id
-  odb_subnet          = google_oracle_database_odb_subnet.database.id
+  odb_network         = local.odb_network_id
+  odb_subnet          = local.odb_subnet_id
   deletion_protection = var.deletion_protection
   properties {
     # OPTIONAL: workload and licensing changes must match your requirements and entitlement.

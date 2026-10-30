@@ -4,6 +4,24 @@ name: Terraform 19c create and destroy
 on:
   workflow_dispatch:
     inputs:
+      network_mode:
+        description: Create new networks or use existing networks (keep unchanged for cleanup)
+        required: true
+        type: choice
+        options: [create, existing]
+        default: create
+      existing_vpc_id:
+        description: Existing VPC full resource ID (existing mode only)
+        type: string
+      existing_application_subnet_id:
+        description: Existing application subnet full resource ID for the new VM
+        type: string
+      existing_odb_network_id:
+        description: Existing ODB network full resource ID
+        type: string
+      existing_odb_subnet_id:
+        description: Existing Client ODB subnet full resource ID
+        type: string
       database_version:
         description: Database version for this deployment (keep unchanged for cleanup)
         required: true
@@ -16,6 +34,12 @@ on:
         type: choice
         options: [deploy, prepare-destroy, destroy]
         default: deploy
+      cleanup_scope:
+        description: Cleanup scope; keep the same choice for prepare-destroy and destroy
+        required: true
+        type: choice
+        options: [all, database-only, client-only, odb-network-and-database]
+        default: all
       confirmation:
         description: For prepare-destroy or destroy, type adbs-19c
         required: false
@@ -56,8 +80,14 @@ jobs:
       TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
       TF_VAR_contact_email: ${{ inputs.contact_email }}
       TF_VAR_admin_password: ${{ secrets.ADB19C_ADMIN_PASSWORD }}
+      NETWORK_MODE: ${{ inputs.network_mode }}
+      EXISTING_VPC: ${{ inputs.existing_vpc_id }}
+      EXISTING_APP_SUBNET: ${{ inputs.existing_application_subnet_id }}
+      EXISTING_ODB_NETWORK: ${{ inputs.existing_odb_network_id }}
+      EXISTING_ODB_SUBNET: ${{ inputs.existing_odb_subnet_id }}
       SELECTED_DATABASE_VERSION: ${{ inputs.database_version }}
       REQUESTED_OPERATION: ${{ inputs.operation }}
+      CLEANUP_SCOPE: ${{ inputs.cleanup_scope }}
       CONFIRMATION: ${{ inputs.confirmation }}
     steps:
       - name: Check out the selected commit
@@ -83,6 +113,23 @@ jobs:
           test -n "$TF_VAR_project_id"
           test -n "$TF_VAR_admin_password"
           test -n "$TF_VAR_contact_email"
+          case "$NETWORK_MODE" in
+            create) ;;
+            existing)
+              test -n "$EXISTING_VPC"
+              test -n "$EXISTING_APP_SUBNET"
+              test -n "$EXISTING_ODB_NETWORK"
+              test -n "$EXISTING_ODB_SUBNET"
+              ;;
+            *) exit 1 ;;
+          esac
+          case "$CLEANUP_SCOPE" in
+            all|database-only|client-only) ;;
+            odb-network-and-database)
+              test "$NETWORK_MODE" = create || { echo 'Reused ODB networks cannot be deleted by this deployment'; exit 1; }
+              ;;
+            *) exit 1 ;;
+          esac
           case "$SELECTED_DATABASE_VERSION" in
             19c|26ai) ;;
             *) echo 'Unsupported database version'; exit 1 ;;
@@ -106,12 +153,27 @@ jobs:
         run: |
           # Explicit CLI input overrides the sample file's version assignment.
           args=(-var-file=environments/19c.tfvars "-var=database_version=$SELECTED_DATABASE_VERSION")
+          args+=("-var=network_mode=$NETWORK_MODE" "-var=existing_vpc_id=$EXISTING_VPC" "-var=existing_application_subnet_id=$EXISTING_APP_SUBNET" "-var=existing_odb_network_id=$EXISTING_ODB_NETWORK" "-var=existing_odb_subnet_id=$EXISTING_ODB_SUBNET")
           case "$REQUESTED_OPERATION" in
             deploy) ;;
             prepare-destroy) args+=(-var=deletion_protection=false) ;;
-            destroy) args+=(-var=deletion_protection=false -destroy) ;;
+            destroy)
+              args+=(-var=deletion_protection=false)
+              case "$CLEANUP_SCOPE" in
+                all) args+=(-destroy) ;;
+                database-only) args+=(-var=retain_database=false) ;;
+                client-only) args+=(-var=retain_client=false) ;;
+                odb-network-and-database) args+=(-var=retain_database=false -var=retain_odb_network=false) ;;
+              esac
+              ;;
+
           esac
           terraform plan -input=false -lock-timeout=5m "${args[@]}" -out=deployment.tfplan
+          if [ "$REQUESTED_OPERATION" = destroy ] && [ "$CLEANUP_SCOPE" != all ]; then
+            terraform show -json deployment.tfplan > cleanup-plan.json
+            python3 ../scripts/check-cleanup-plan.py "$CLEANUP_SCOPE" cleanup-plan.json
+            rm -f cleanup-plan.json
+          fi
           terraform show -no-color deployment.tfplan
           echo "sha256=$(sha256sum deployment.tfplan | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
           echo 'Review the Terraform plan in this job before approving terraform-apply.' >> "$GITHUB_STEP_SUMMARY"
