@@ -4,6 +4,12 @@ name: Terraform 19c create and destroy
 on:
   workflow_dispatch:
     inputs:
+      database_version:
+        description: Database version for this deployment (keep unchanged for cleanup)
+        required: true
+        type: choice
+        options: ['19c', '26ai']
+        default: '19c'
       operation:
         description: Create/update, disable deletion protection, or destroy the 19c example
         required: true
@@ -50,6 +56,7 @@ jobs:
       TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
       TF_VAR_contact_email: ${{ inputs.contact_email }}
       TF_VAR_admin_password: ${{ secrets.ADB19C_ADMIN_PASSWORD }}
+      SELECTED_DATABASE_VERSION: ${{ inputs.database_version }}
       REQUESTED_OPERATION: ${{ inputs.operation }}
       CONFIRMATION: ${{ inputs.confirmation }}
     steps:
@@ -76,6 +83,10 @@ jobs:
           test -n "$TF_VAR_project_id"
           test -n "$TF_VAR_admin_password"
           test -n "$TF_VAR_contact_email"
+          case "$SELECTED_DATABASE_VERSION" in
+            19c|26ai) ;;
+            *) echo 'Unsupported database version'; exit 1 ;;
+          esac
           case "$REQUESTED_OPERATION" in
             deploy) ;;
             prepare-destroy|destroy) test "$CONFIRMATION" = "adbs-19c" ;;
@@ -93,7 +104,8 @@ jobs:
       - name: Create and display the plan
         id: plan
         run: |
-          args=(-var-file=environments/19c.tfvars)
+          # Explicit CLI input overrides the sample file's version assignment.
+          args=(-var-file=environments/19c.tfvars "-var=database_version=$SELECTED_DATABASE_VERSION")
           case "$REQUESTED_OPERATION" in
             deploy) ;;
             prepare-destroy) args+=(-var=deletion_protection=false) ;;

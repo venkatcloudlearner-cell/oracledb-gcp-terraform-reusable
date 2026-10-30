@@ -1,6 +1,6 @@
 # Oracle Database@Google Cloud: reusable Terraform
 
-Provision an independent ADB-S 19c example using configurable Terraform inputs and reviewed GitHub Actions operations.
+Provision an independent ADB-S example using configurable Terraform inputs and reviewed GitHub Actions operations. Select 19c or 26ai through the database_version workflow input.
 
 ## Configuration
 
@@ -30,3 +30,10 @@ The workflow cannot prompt interactively for passwords. Never enter a password i
 ## Validation status
 
 Terraform formatting and schema validation passed locally. This repository's cloud deployment has not yet been run. Creating resources incurs charges; destruction removes database data and example infrastructure. Shared bucket and authentication infrastructure are not destroyed by this configuration.
+
+## Database version input
+
+The manual workflow accepts `database_version` as a choice: `19c` or `26ai`.
+It passes the selection as a Terraform CLI variable, which takes precedence over the sample input file.
+Keep the selected version unchanged for subsequent updates and cleanup of the same deployment.
+The sample names and state prefix still identify one example deployment; selecting a different version does not create a second independent deployment. Use separate names and state for another environment.
