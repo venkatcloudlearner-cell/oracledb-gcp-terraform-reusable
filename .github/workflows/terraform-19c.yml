@@ -1,0 +1,158 @@
+name: Terraform 19c create and destroy
+
+# Manual only. The environment approval must be configured in GitHub settings.
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Create/update, disable deletion protection, or destroy the 19c example
+        required: true
+        type: choice
+        options: [deploy, prepare-destroy, destroy]
+        default: deploy
+      confirmation:
+        description: For prepare-destroy or destroy, type adbs-19c
+        required: false
+        type: string
+      contact_email:
+        description: Notification email for the separate 19c example
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: adbs-19c-example
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+  STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: terraform-plan
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: terraform
+        shell: bash
+    outputs:
+      plan_sha256: ${{ steps.plan.outputs.sha256 }}
+    env:
+      TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+      TF_VAR_contact_email: ${{ inputs.contact_email }}
+      TF_VAR_admin_password: ${{ secrets.ADB19C_ADMIN_PASSWORD }}
+      REQUESTED_OPERATION: ${{ inputs.operation }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - name: Check out the selected commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+      - name: Authenticate through Workload Identity Federation
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.TF_SERVICE_ACCOUNT }}
+      - name: Install Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+      - name: Check required configuration
+        run: |
+          test -n "$STATE_BUCKET"
+          test -n "$TF_VAR_project_id"
+          test -n "$TF_VAR_admin_password"
+          test -n "$TF_VAR_contact_email"
+          case "$REQUESTED_OPERATION" in
+            deploy) ;;
+            prepare-destroy|destroy) test "$CONFIRMATION" = "adbs-19c" ;;
+            *) exit 1 ;;
+          esac
+          # These project-wide APIs are prerequisites, not owned by this example state.
+          for api in compute.googleapis.com oracledatabase.googleapis.com iap.googleapis.com; do
+            gcloud services list --enabled --project="$TF_VAR_project_id" --format="value(config.name)" | grep -Fx "$api" > /dev/null
+          done
+      - name: Initialize shared state and validate
+        run: |
+          terraform fmt -check
+          terraform init -input=false -lockfile=readonly -backend-config="bucket=$STATE_BUCKET" -backend-config="prefix=adbs/19c-example"
+          terraform validate
+      - name: Create and display the plan
+        id: plan
+        run: |
+          args=(-var-file=environments/19c.tfvars)
+          case "$REQUESTED_OPERATION" in
+            deploy) ;;
+            prepare-destroy) args+=(-var=deletion_protection=false) ;;
+            destroy) args+=(-var=deletion_protection=false -destroy) ;;
+          esac
+          terraform plan -input=false -lock-timeout=5m "${args[@]}" -out=deployment.tfplan
+          terraform show -no-color deployment.tfplan
+          echo "sha256=$(sha256sum deployment.tfplan | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          echo 'Review the Terraform plan in this job before approving terraform-apply.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Store the saved plan privately
+        # Binary plans can contain secrets. Never upload them as public-repo artifacts.
+        run: |
+          gcloud storage cp deployment.tfplan "gs://$STATE_BUCKET/private-plans/$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT/deployment.tfplan" --if-generation-match=0
+
+  apply:
+    needs: plan
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    # GitHub pauses here for the configured required reviewer.
+    environment: terraform-apply
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: terraform
+        shell: bash
+    env:
+      EXPECTED_PLAN_SHA256: ${{ needs.plan.outputs.plan_sha256 }}
+    steps:
+      - name: Check out the same commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+      - name: Authenticate through Workload Identity Federation
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.TF_SERVICE_ACCOUNT }}
+      - name: Install Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+      - name: Download and verify the reviewed plan
+        run: |
+          gcloud storage cp "gs://$STATE_BUCKET/private-plans/$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT/deployment.tfplan" deployment.tfplan
+          echo "$EXPECTED_PLAN_SHA256  deployment.tfplan" | sha256sum --check
+      - name: Apply the saved plan
+        run: |
+          terraform init -input=false -lockfile=readonly -backend-config="bucket=$STATE_BUCKET" -backend-config="prefix=adbs/19c-example"
+          terraform apply -input=false -lock-timeout=5m deployment.tfplan
+      - name: Remove the temporary private plan
+        if: always()
+        run: |
+          rm -f deployment.tfplan
+          gcloud storage rm "gs://$STATE_BUCKET/private-plans/$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT/deployment.tfplan"

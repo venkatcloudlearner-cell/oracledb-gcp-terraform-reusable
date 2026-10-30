@@ -1,0 +1,17 @@
+# Local provider cache and Terraform state can contain sensitive data.
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+# Saved plans can contain the database password.
+**/*.tfplan
+**/plan-review.txt
+# Keep deployment-specific inputs and authentication files out of Git.
+**/terraform.tfvars
+**/*.auto.tfvars
+**/backend.hcl
+**/gha-creds-*.json
+**/crash.log
+# Never commit downloaded wallets or SSH private keys.
+**/*[Ww]allet*
+**/*.ppk
+**/*.pem

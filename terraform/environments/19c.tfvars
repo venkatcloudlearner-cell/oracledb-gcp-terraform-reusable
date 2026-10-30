@@ -1,0 +1,22 @@
+# Separate 19c example: use only with its dedicated state prefix adbs/19c-example.
+# Workflow selects only the dedicated 19c state.
+region                 = "us-east4"
+gcp_oracle_zone        = "us-east4-b-r1"
+name_prefix            = "adbs-19c"
+database_resource_id   = "adbs-19c-database"
+database_name          = "ADBS19C"
+database_display_name  = "ADBS-19c"
+private_endpoint_label = "adbs19c"
+database_version       = "19c"
+create_database        = true
+compute_count          = 2
+storage_tb             = 1
+# Example ranges: verify they do not overlap connected networks.
+client_cidr            = "10.30.0.0/24"
+database_cidr          = "10.31.0.0/24"
+client_vm_zone         = "us-east4-b"
+client_vm_machine_type = "e2-small"
+deletion_protection    = true
+# Supply contact_email and admin_password securely through the workflow.
+# Existing project APIs remain owned by their original state.
+manage_project_apis = false

@@ -1,0 +1,34 @@
+name: Terraform checks
+# Runs checks only; this workflow cannot deploy resources.
+on:
+  push:
+    branches: [main]
+    paths: ['terraform/**', '.github/workflows/terraform-checks.yml']
+  pull_request:
+    paths: ['terraform/**', '.github/workflows/terraform-checks.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+      - name: Check formatting
+        run: terraform fmt -check
+      - name: Initialize provider without connecting to state
+        run: terraform init -backend=false -input=false -lockfile=readonly
+      - name: Validate configuration
+        run: terraform validate
