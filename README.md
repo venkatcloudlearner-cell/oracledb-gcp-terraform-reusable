@@ -89,3 +89,9 @@ For partial cleanup, Terraform changes resource counts through `retain_database`
 Deleting a database removes its data. Confirm backup and retention requirements before approval. For a simple create-and-remove demonstration, use `all`; the other choices support deliberately retaining part of the environment.
 
 The implementation follows Terraform's [configuration-driven resource deletion](https://developer.hashicorp.com/terraform/language/resources/destroy) and avoids routine [resource targeting](https://developer.hashicorp.com/terraform/tutorials/state/resource-targeting).
+
+## New network CIDR inputs
+
+When network_mode is create, the Run workflow form accepts client_cidr (application subnet) and database_cidr (ODB Client subnet). Defaults are 10.30.0.0/24 and 10.31.0.0/24. These inputs override the example file for new networks. The workflow validates canonical RFC1918 IPv4 ranges and rejects overlap between the two. Check overlap with existing/connected networks and service-specific size requirements before planning. The VM and database addresses are assigned automatically.
+
+In existing mode the CIDR fields are ignored; supply the four existing resource IDs. Keep the same CIDRs for later runs and cleanup of a created environment. Changing them can replace resources. The state prefix and resource names still identify one deployment; different CIDRs do not create an independent deployment.

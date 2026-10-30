@@ -10,6 +10,14 @@ on:
         type: choice
         options: [create, existing]
         default: create
+      client_cidr:
+        description: New application subnet IPv4 CIDR (create mode; keep unchanged for cleanup)
+        type: string
+        default: '10.30.0.0/24'
+      database_cidr:
+        description: New ODB client subnet IPv4 CIDR (create mode; keep unchanged for cleanup)
+        type: string
+        default: '10.31.0.0/24'
       existing_vpc_id:
         description: Existing VPC full resource ID (existing mode only)
         type: string
@@ -81,6 +89,8 @@ jobs:
       TF_VAR_contact_email: ${{ inputs.contact_email }}
       TF_VAR_admin_password: ${{ secrets.ADB19C_ADMIN_PASSWORD }}
       NETWORK_MODE: ${{ inputs.network_mode }}
+      CLIENT_CIDR: ${{ inputs.client_cidr }}
+      DATABASE_CIDR: ${{ inputs.database_cidr }}
       EXISTING_VPC: ${{ inputs.existing_vpc_id }}
       EXISTING_APP_SUBNET: ${{ inputs.existing_application_subnet_id }}
       EXISTING_ODB_NETWORK: ${{ inputs.existing_odb_network_id }}
@@ -124,7 +134,7 @@ jobs:
           test -n "$TF_VAR_admin_password"
           test -n "$TF_VAR_contact_email"
           case "$NETWORK_MODE" in
-            create) ;;
+            create) python3 ../scripts/check-network-inputs.py "$CLIENT_CIDR" "$DATABASE_CIDR" ;;
             existing)
               test -n "$EXISTING_VPC"
               test -n "$EXISTING_APP_SUBNET"
@@ -164,6 +174,9 @@ jobs:
           # Explicit CLI input overrides the sample file's version assignment.
           args=(-var-file=environments/19c.tfvars "-var=database_version=$SELECTED_DATABASE_VERSION")
           args+=("-var=network_mode=$NETWORK_MODE" "-var=existing_vpc_id=$EXISTING_VPC" "-var=existing_application_subnet_id=$EXISTING_APP_SUBNET" "-var=existing_odb_network_id=$EXISTING_ODB_NETWORK" "-var=existing_odb_subnet_id=$EXISTING_ODB_SUBNET")
+          if [ "$NETWORK_MODE" = create ]; then
+            args+=("-var=client_cidr=$CLIENT_CIDR" "-var=database_cidr=$DATABASE_CIDR")
+          fi
           case "$REQUESTED_OPERATION" in
             deploy) ;;
             prepare-destroy) args+=(-var=deletion_protection=false) ;;
